@@ -13,7 +13,7 @@ export class GHLSyncService {
   async syncClinicContacts(clinicId, direction = 'both') {
     try {
       dbManager.log('info', `🔄 Starting contact sync for clinic: ${clinicId}`);
-      
+
       // Get clinic mapping
       const mapping = await this.getClinicMapping(clinicId);
       if (!mapping) {
@@ -50,7 +50,6 @@ export class GHLSyncService {
 
       dbManager.log('info', '✅ Contact sync completed', syncResults);
       return syncResults;
-
     } catch (error) {
       dbManager.log('error', 'Contact sync failed', error);
       throw error;
@@ -61,7 +60,7 @@ export class GHLSyncService {
   async importContactsFromGHL(mapping) {
     try {
       dbManager.log('info', `📥 Importing contacts from GHL location: ${mapping.ghl_sub_account.ghl_location_id}`);
-      
+
       let imported = 0;
       let errors = [];
       let startAfter = null;
@@ -103,10 +102,12 @@ export class GHLSyncService {
 
           // Rate limiting pause
           await new Promise(resolve => setTimeout(resolve, 1000));
-
         } catch (error) {
           dbManager.log('error', 'Batch import failed', error);
-          errors.push({ batch: 'unknown', error: error.message });
+          errors.push({
+            batch: 'unknown',
+            error: error.message
+          });
           hasMore = false;
         }
       }
@@ -171,7 +172,7 @@ export class GHLSyncService {
   async exportContactsToGHL(mapping) {
     try {
       dbManager.log('info', `📤 Exporting contacts to GHL location: ${mapping.ghl_sub_account.ghl_location_id}`);
-      
+
       let exported = 0;
       let updated = 0;
       let errors = [];
@@ -188,7 +189,7 @@ export class GHLSyncService {
       // Process in batches
       for (let i = 0; i < clients.length; i += this.batchSize) {
         const batch = clients.slice(i, i + this.batchSize);
-        
+
         for (const client of batch) {
           try {
             if (client.ghl_contact_id) {
@@ -236,7 +237,7 @@ export class GHLSyncService {
       };
 
       const ghlContact = await ghlApiService.createContact(locationId, contactData);
-      
+
       // Update Smart Paws client with GHL contact ID
       await supabase
         .from('sp_clients_live')
@@ -324,7 +325,7 @@ export class GHLSyncService {
       ghlContact.state,
       ghlContact.postalCode
     ].filter(Boolean);
-    
+
     return parts.join(', ');
   }
 

@@ -1,121 +1,232 @@
-// Add GHL tables to existing database.js createTablesIfNotExist method
+import { createClient } from '@supabase/supabase-js'
+import supabase from './supabase'
 
-const ghlTables = [
-  {
-    name: 'ghl_agency_credentials',
-    sql: `
-      CREATE TABLE IF NOT EXISTS ghl_agency_credentials (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        access_token TEXT NOT NULL,
-        refresh_token TEXT,
-        expires_at TIMESTAMP WITH TIME ZONE,
-        token_type TEXT DEFAULT 'Bearer',
-        scope TEXT,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-      );
-
-      -- Enable RLS
-      ALTER TABLE ghl_agency_credentials ENABLE ROW LEVEL SECURITY;
-      
-      -- Create policy
-      CREATE POLICY "Enable all for authenticated users" ON ghl_agency_credentials 
-        FOR ALL USING (true);
-    `
-  },
-  {
-    name: 'ghl_sub_accounts',
-    sql: `
-      CREATE TABLE IF NOT EXISTS ghl_sub_accounts (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        ghl_location_id TEXT UNIQUE NOT NULL,
-        name TEXT NOT NULL,
-        business_name TEXT,
-        phone TEXT,
-        email TEXT,
-        website TEXT,
-        address TEXT,
-        city TEXT,
-        state TEXT,
-        postal_code TEXT,
-        country TEXT,
-        timezone TEXT,
-        active BOOLEAN DEFAULT true,
-        last_synced TIMESTAMP WITH TIME ZONE,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-      );
-
-      -- Enable RLS
-      ALTER TABLE ghl_sub_accounts ENABLE ROW LEVEL SECURITY;
-      
-      -- Create policy
-      CREATE POLICY "Enable all for authenticated users" ON ghl_sub_accounts 
-        FOR ALL USING (true);
-    `
-  },
-  {
-    name: 'ghl_clinic_mappings',
-    sql: `
-      CREATE TABLE IF NOT EXISTS ghl_clinic_mappings (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        clinic_id UUID REFERENCES sp_clinics_live(id),
-        ghl_sub_account_id UUID REFERENCES ghl_sub_accounts(id),
-        mapping_type TEXT DEFAULT 'full_sync',
-        sync_settings JSONB DEFAULT '{}',
-        mapped_by UUID REFERENCES sp_users_live(id),
-        active BOOLEAN DEFAULT true,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-        UNIQUE(clinic_id, ghl_sub_account_id)
-      );
-
-      -- Enable RLS
-      ALTER TABLE ghl_clinic_mappings ENABLE ROW LEVEL SECURITY;
-      
-      -- Create policy
-      CREATE POLICY "Enable all for authenticated users" ON ghl_clinic_mappings 
-        FOR ALL USING (true);
-    `
-  },
-  {
-    name: 'ghl_sync_log',
-    sql: `
-      CREATE TABLE IF NOT EXISTS ghl_sync_log (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        clinic_mapping_id UUID REFERENCES ghl_clinic_mappings(id),
-        sync_type TEXT NOT NULL,
-        entity_type TEXT NOT NULL,
-        entity_id TEXT,
-        status TEXT DEFAULT 'pending',
-        error_message TEXT,
-        sync_data JSONB,
-        processed_at TIMESTAMP WITH TIME ZONE,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-      );
-
-      -- Enable RLS
-      ALTER TABLE ghl_sync_log ENABLE ROW LEVEL SECURITY;
-      
-      -- Create policy
-      CREATE POLICY "Enable all for authenticated users" ON ghl_sync_log 
-        FOR ALL USING (true);
-    `
+// Database Manager Class
+export class DatabaseManager {
+  constructor() {
+    this.client = supabase
+    this.initialized = false
   }
-];
 
-// Add these tables to the existing tables array in createTablesIfNotExist()
-// Also add ghl_contact_id column to sp_clients_live table
-const addGHLColumnsSQL = `
-  -- Add GHL contact ID to clients table if it doesn't exist
-  DO $$ 
-  BEGIN
-    IF NOT EXISTS (
-      SELECT 1 FROM information_schema.columns 
-      WHERE table_name = 'sp_clients_live' 
-      AND column_name = 'ghl_contact_id'
-    ) THEN
-      ALTER TABLE sp_clients_live 
-      ADD COLUMN ghl_contact_id TEXT;
-    END IF;
-  END $$;
-`;
+  // Logging utility
+  log(level, message, data = null) {
+    const timestamp = new Date().toISOString()
+    const logMessage = `[${timestamp}] [${level.toUpperCase()}] ${message}`
+    
+    if (data) {
+      console.log(logMessage, data)
+    } else {
+      console.log(logMessage)
+    }
+  }
+
+  // Initialize database
+  async initialize() {
+    try {
+      this.log('info', '🚀 Initializing database manager...')
+      
+      // Test basic connection
+      const { data, error } = await this.client
+        .from('sp_organizations_live')
+        .select('id')
+        .limit(1)
+
+      if (error) {
+        this.log('error', 'Database connection test failed', error)
+        return false
+      }
+
+      this.initialized = true
+      this.log('info', '✅ Database manager initialized successfully')
+      return true
+    } catch (error) {
+      this.log('error', '❌ Database initialization failed', error)
+      return false
+    }
+  }
+
+  // Get or create organization
+  async getOrganization() {
+    try {
+      // Try to get existing organization
+      let { data: org, error } = await this.client
+        .from('sp_organizations_live')
+        .select('*')
+        .limit(1)
+        .single()
+
+      if (error && error.code !== 'PGRST116') {
+        throw error
+      }
+
+      if (!org) {
+        // Create default organization
+        const { data: newOrg, error: createError } = await this.client
+          .from('sp_organizations_live')
+          .insert({
+            name: 'Smart Paws Demo Organization',
+            domain: 'smartpaws.demo'
+          })
+          .select()
+          .single()
+
+        if (createError) throw createError
+        org = newOrg
+        this.log('info', '✅ Created default organization', org)
+      }
+
+      return org
+    } catch (error) {
+      this.log('error', '❌ Failed to get/create organization', error)
+      throw error
+    }
+  }
+
+  // Test database queries
+  async testQueries() {
+    try {
+      this.log('info', '🧪 Testing database queries...')
+      
+      const tests = [
+        { table: 'sp_organizations_live', name: 'Organizations' },
+        { table: 'sp_clinics_live', name: 'Clinics' },
+        { table: 'sp_users_live', name: 'Users' },
+        { table: 'sp_rooms_live', name: 'Rooms' }
+      ]
+
+      for (const test of tests) {
+        try {
+          const { data, error } = await this.client
+            .from(test.table)
+            .select('id')
+            .limit(1)
+
+          if (error) {
+            this.log('warn', `⚠️ ${test.name} table test failed`, error)
+          } else {
+            this.log('info', `✅ ${test.name} table accessible`)
+          }
+        } catch (error) {
+          this.log('warn', `⚠️ ${test.name} table error`, error)
+        }
+      }
+
+      this.log('info', '✅ Database query tests completed')
+      return true
+    } catch (error) {
+      this.log('error', '❌ Database query tests failed', error)
+      return false
+    }
+  }
+
+  // Debug database state
+  async debugDatabaseState() {
+    try {
+      this.log('info', '🔍 Starting database debug...')
+      
+      const debugInfo = {
+        timestamp: new Date().toISOString(),
+        connection: 'unknown',
+        tables: {},
+        errors: []
+      }
+
+      // Test connection
+      try {
+        const { data, error } = await this.client
+          .from('sp_organizations_live')
+          .select('count')
+          .limit(1)
+
+        debugInfo.connection = error ? 'failed' : 'success'
+      } catch (error) {
+        debugInfo.connection = 'failed'
+        debugInfo.errors.push(error.message)
+      }
+
+      this.log('info', '🔍 Database debug completed', debugInfo)
+      return debugInfo
+    } catch (error) {
+      this.log('error', '❌ Database debug failed', error)
+      return { error: error.message }
+    }
+  }
+}
+
+// Live Data Service
+export class LiveDataService {
+  constructor() {
+    this.subscriptions = new Map()
+    this.dbManager = new DatabaseManager()
+  }
+
+  async initialize() {
+    return await this.dbManager.initialize()
+  }
+
+  async subscribeToTable(tableName, callback, filter = null) {
+    try {
+      const channelName = `${tableName}_${Date.now()}`
+      
+      let channel = supabase.channel(channelName)
+      
+      const config = {
+        event: '*',
+        schema: 'public',
+        table: tableName
+      }
+
+      if (filter) {
+        config.filter = `${filter.column}=eq.${filter.value}`
+      }
+
+      channel = channel.on('postgres_changes', config, callback)
+      
+      const subscription = await channel.subscribe()
+      
+      this.subscriptions.set(channelName, {
+        subscription,
+        channel,
+        tableName,
+        callback
+      })
+
+      this.dbManager.log('info', `✅ Subscribed to ${tableName}`)
+      return { id: channelName, subscription }
+    } catch (error) {
+      this.dbManager.log('error', `❌ Failed to subscribe to ${tableName}`, error)
+      return null
+    }
+  }
+
+  async unsubscribe(subscriptionInfo) {
+    try {
+      if (subscriptionInfo && subscriptionInfo.id) {
+        const sub = this.subscriptions.get(subscriptionInfo.id)
+        if (sub) {
+          await supabase.removeChannel(sub.channel)
+          this.subscriptions.delete(subscriptionInfo.id)
+          this.dbManager.log('info', `✅ Unsubscribed from ${sub.tableName}`)
+        }
+      }
+    } catch (error) {
+      this.dbManager.log('error', '❌ Failed to unsubscribe', error)
+    }
+  }
+
+  async testQueries() {
+    return await this.dbManager.testQueries()
+  }
+}
+
+// Export singleton instances
+export const dbManager = new DatabaseManager()
+export const liveDataService = new LiveDataService()
+
+// Default export
+export default {
+  dbManager,
+  liveDataService,
+  DatabaseManager,
+  LiveDataService
+}

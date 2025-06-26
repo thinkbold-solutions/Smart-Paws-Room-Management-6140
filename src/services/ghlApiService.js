@@ -20,15 +20,15 @@ export class GHLApiService {
   // Enhanced OAuth flow for marketplace apps
   async initiateMarketplaceOAuth() {
     // Check if environment variables are configured
-    if (!import.meta.env.VITE_GHL_CLIENT_ID || !import.meta.env.VITE_GHL_CLIENT_SECRET) {
-      toast.error('GHL Marketplace App not configured. Please add your Client ID and Secret to environment variables.');
+    if (!this.clientId || !this.clientSecret) {
+      console.error('GHL Marketplace App not configured. Please add your Client ID and Secret to environment variables.');
       return;
     }
 
     const state = this.generateSecureState();
     const scopes = [
       'locations.readonly',
-      'contacts.readonly', 
+      'contacts.readonly',
       'contacts.write',
       'calendars.readonly',
       'opportunities.readonly'
@@ -43,7 +43,6 @@ export class GHLApiService {
 
     // Store state for verification
     localStorage.setItem('ghl_oauth_state', state);
-    
     window.location.href = authUrl.toString();
   }
 
@@ -177,12 +176,11 @@ export class GHLApiService {
   // Make authenticated API request with rate limiting
   async makeRequest(endpoint, options = {}) {
     await new Promise(resolve => setTimeout(resolve, this.rateLimitDelay));
-    
+
     let retries = 0;
     while (retries < this.maxRetries) {
       try {
         const token = await this.getValidToken();
-        
         const response = await fetch(`${this.baseURL}${endpoint}`, {
           ...options,
           headers: {
@@ -218,10 +216,9 @@ export class GHLApiService {
   async discoverSubAccounts() {
     try {
       dbManager.log('info', '🔍 Starting GHL sub-account discovery...');
-      
       const response = await this.makeRequest('/locations');
       const locations = response.locations || [];
-      
+
       dbManager.log('info', `✅ Found ${locations.length} GHL locations`);
 
       // Store discovered sub-accounts
@@ -329,9 +326,15 @@ export class GHLApiService {
   async testConnection() {
     try {
       await this.makeRequest('/locations?limit=1');
-      return { success: true, message: 'GHL API connection successful' };
+      return {
+        success: true,
+        message: 'GHL API connection successful'
+      };
     } catch (error) {
-      return { success: false, error: error.message };
+      return {
+        success: false,
+        error: error.message
+      };
     }
   }
 }
